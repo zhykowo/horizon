@@ -714,13 +714,11 @@ fn parse<T: for<'de> Deserialize<'de>>(v: Value) -> Result<T, Error> {
 
 /// The launcher's user agent, a 15 s timeout and the player's proxy.
 fn agent(url: &str) -> ureq::Agent {
-    crate::proxy::agent(
-        ureq::AgentBuilder::new()
+    horizon_port_pack::net::agent("wardrobe", url, |builder| {
+        builder
             .timeout(Duration::from_secs(15))
-            .user_agent(&format!("horizon-launcher/{}", crate::backend::VERSION)),
-        url,
-    )
-    .build()
+            .user_agent(&format!("horizon-launcher/{}", crate::backend::VERSION))
+    })
 }
 
 #[cfg(test)]

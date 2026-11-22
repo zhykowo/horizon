@@ -40,15 +40,12 @@ pub fn github_release_asset(url: &str) -> bool {
 /// Bigger than any pack these sources serve (Modrinth caps uploads at 500 MiB).
 const MAX: u64 = 1 << 30;
 
-/// The HTTP agent the sources share, reaching `url` through the player's proxy when one is set
-/// (`proxy`). Modrinth asks for a user agent that names the project.
-///
-/// It is kept between downloads: a fresh agent starts a new connection pool, so one per file would
-/// be a handshake per file, and a modpack brings hundreds.
+/// The HTTP agent the sources share, through the player's proxy when one is set and kept between
+/// downloads (`horizon_port_pack::net::agent`). Modrinth asks for a user agent that names the
+/// project.
 pub(super) fn agent(url: &str) -> ureq::Agent {
-    let spec = crate::proxy::spec_for(url);
-    horizon_port_pack::net::keep("browser", spec.as_deref(), |proxy| {
-        let builder = ureq::AgentBuilder::new()
+    horizon_port_pack::net::agent("browser", url, |builder| {
+        builder
             .user_agent(&format!(
                 "{} horizon-launcher/{} (github.com/{})",
                 crate::backend::REPO,
@@ -56,11 +53,7 @@ pub(super) fn agent(url: &str) -> ureq::Agent {
                 crate::backend::REPO
             ))
             .timeout_connect(std::time::Duration::from_secs(15))
-            .timeout_read(std::time::Duration::from_secs(60));
-        match proxy {
-            Some(proxy) => builder.proxy(proxy).build(),
-            None => builder.build(),
-        }
+            .timeout_read(std::time::Duration::from_secs(60))
     })
 }
 

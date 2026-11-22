@@ -466,17 +466,15 @@ pub(crate) const CLIENT: &str = if cfg!(windows) {
 };
 
 /// The agent `url` is fetched with: the launcher's own user agent, through the player's proxy when
-/// one is set (`proxy`).
+/// one is set and kept between the files of one install (`horizon_port_pack::net`).
 pub(crate) fn agent(url: &str) -> ureq::Agent {
-    crate::proxy::agent(
-        ureq::AgentBuilder::new()
+    horizon_port_pack::net::agent("launcher", url, |builder| {
+        builder
             .user_agent(&format!("horizon-launcher/{VERSION}"))
             // A connection that goes quiet fails instead of waiting for ever.
             .timeout_connect(std::time::Duration::from_secs(15))
-            .timeout_read(std::time::Duration::from_secs(60)),
-        url,
-    )
-    .build()
+            .timeout_read(std::time::Duration::from_secs(60))
+    })
 }
 
 /// A file's body, from the network as the launcher reaches it.
@@ -4628,8 +4626,8 @@ pub struct Settings {
     /// default. Appended after the launcher's own arguments, so they can add to or override them.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub game_args: String,
-    /// The proxy every download goes through (`proxy`), such as `http://127.0.0.1:7890` or
-    /// `socks5://127.0.0.1:1080`.
+    /// The proxy every download goes through (`horizon_port_pack::net`), such as
+    /// `http://127.0.0.1:7890` or `socks5://127.0.0.1:1080`.
     /// Unset means none: the environment's `HTTPS_PROXY` and `HTTP_PROXY` apply instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy: Option<String>,

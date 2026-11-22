@@ -95,9 +95,9 @@ fn run_launcher() {
     #[cfg(windows)]
     backend::remove_replaced_binaries();
     backend::cleanup_launcher_updates();
-    // What the launcher downloads goes through the player's proxy, if they set one: the parts
-    // that build their own agents (`horizon-port-pack`) are told before anything starts.
-    horizon_launcher::proxy::announce(horizon_launcher::backend::Settings::load().proxy);
+    // What the launcher downloads goes through the player's proxy, if they set one: every agent is
+    // built by `horizon_port_pack::net`, which is told before anything starts.
+    horizon_port_pack::net::set_proxy(horizon_launcher::backend::Settings::load().proxy);
     // The setup wizard and `horizon-launcher.exe uninstall` (what Control Panel runs) are windows,
     // not CLI commands: asked of the CLI parser first, `uninstall` was refused as an unknown
     // subcommand, with the error going to the console that Control Panel's start doesn't have.

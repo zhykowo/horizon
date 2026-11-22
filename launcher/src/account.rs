@@ -123,11 +123,9 @@ fn builder() -> ureq::AgentBuilder {
 }
 
 /// A request to `url`: the launcher's user agent, a 20 s timeout, and the player's proxy when one
-/// is set (`proxy`), since a sign-in has to get out the way downloads do.
+/// is set (`horizon_port_pack::net`), since a sign-in has to get out the way downloads do.
 fn request_to(method: &str, url: &str) -> ureq::Request {
-    crate::proxy::agent(builder(), url)
-        .build()
-        .request(method, url)
+    horizon_port_pack::net::agent("account", url, |_| builder()).request(method, url)
 }
 
 /// One request's result: the status and the JSON body (empty when there is none). Transport

@@ -1,21 +1,22 @@
-//! The agents port-pack's downloads go through: the jars of an imported modpack come from the same
-//! places as everything else, so they take the same proxy — and leave the same hosts alone.
+//! The agents every download builds: the launcher's own requests and the jars of an imported
+//! modpack come from the same places, so they take the same proxy — and leave the same hosts alone.
 //!
-//! The launcher hands its own setting over (`set_proxy`, from `proxy.rs`); a run of the
-//! `horizon-port-pack` command reads `HTTPS_PROXY`, `HTTP_PROXY` and `ALL_PROXY` instead (`env_for`),
-//! taking the one that matches the address's scheme the way the launcher does. Either way a host in
-//! `NO_PROXY`, or on this computer, is reached directly: a host that only answers without the proxy
-//! would otherwise fail here while the launcher's own downloads worked.
+//! The launcher hands its setting over (`set_proxy`, from `settings.json`); a run of the
+//! `horizon-port-pack` command reads `HTTPS_PROXY`, `HTTP_PROXY` and `ALL_PROXY` instead, taking the
+//! one that matches the address's scheme. Either way a host in `NO_PROXY`, or on this computer, is
+//! reached directly: a host that only answers without the proxy would otherwise fail here while the
+//! launcher's own downloads worked.
 //!
-//! Which hosts those are is decided here and nowhere else. The launcher asks `direct`, `env_for`,
-//! `host_of`, `scheme_of` and `parse` for its own traffic, and keeps its agents here too
-//! (`keep`), so the two agree whatever the player set — and there is one copy of the rules to
-//! change when they need it.
+//! Which hosts those are, and how an address is read, is decided here and nowhere else: the
+//! launcher asks `refuse` before it keeps an address, builds every agent through `agent`, and asks
+//! `spec_for` for the few clients that aren't `ureq`'s.
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-/// What the launcher set, when it did.
+/// What the launcher set, when it did. It is the only copy: the launcher reads `settings.json` at
+/// start and when the player changes the setting, and hands the address here (`setting` reads it
+/// back for the clients that build their own connections).
 static PROXY: Mutex<Option<String>> = Mutex::new(None);
 
 /// Agents kept for reuse, named by the part that asked and the proxy they use: a fresh `Agent`
@@ -35,22 +36,35 @@ pub fn set_proxy(spec: Option<String>) {
     *lock(&KEPT) = None;
 }
 
+/// The launcher's setting, trimmed, or None when it has none. For the parts that build their own
+/// connections (a native build's Cargo), which can't take an `Agent`.
+pub fn setting() -> Option<String> {
+    lock(&PROXY).clone()
+}
+
 /// The proxy address `url` is fetched through: what the launcher set, else the environment's for
-/// its scheme, unless `url` is a host that must be reached directly.
-fn spec_for(url: &str) -> Option<String> {
+/// its scheme, unless `url` is a host that must be reached directly. For the clients that aren't
+/// `ureq`'s and read an address rather than an `Agent`.
+pub fn spec_for(url: &str) -> Option<String> {
     if direct(url) {
         return None;
     }
-    lock(&PROXY)
-        .clone()
-        .or_else(|| env_for(scheme_of(url).unwrap_or("https")))
+    setting().or_else(|| env_for(scheme_of(url).unwrap_or("https")))
 }
 
-/// An agent for downloading `url`: through the proxy when one is set, unless `url` is a host that
-/// must be reached directly.
-pub fn agent(url: &str) -> ureq::Agent {
-    keep("port-pack", spec_for(url).as_deref(), |proxy| {
-        let builder = ureq::AgentBuilder::new();
+/// An agent for `url`, from `slot`: through the proxy when one is set, unless `url` is a host that
+/// must be reached directly. `configure` is the part's own choices (user agent, timeouts).
+///
+/// It is kept for the next request that names the same `slot` and proxy: a modpack's jars are
+/// fetched one after another, and one agent per file would be one handshake per file.
+pub fn agent(
+    slot: &str,
+    url: &str,
+    configure: impl FnOnce(ureq::AgentBuilder) -> ureq::AgentBuilder,
+) -> ureq::Agent {
+    let spec = spec_for(url);
+    keep(slot, spec.as_deref(), |proxy| {
+        let builder = configure(ureq::AgentBuilder::new());
         match proxy {
             Some(proxy) => builder.proxy(proxy).build(),
             None => builder.build(),
@@ -58,20 +72,18 @@ pub fn agent(url: &str) -> ureq::Agent {
     })
 }
 
+/// Why `spec` can't be used as a proxy, or None when it can (empty means none). The Settings page
+/// asks before it keeps an address, and the CLI before it writes one down.
+pub fn refuse(spec: &str) -> Option<String> {
+    read(spec).err()
+}
+
 /// GET from allowed HTTPS hosts, validating every redirect before contacting it.
 pub(crate) fn get_from_hosts(url: &str, hosts: &[&str]) -> Result<Option<ureq::Response>, String> {
     follow(url, hosts, |address| {
-        let agent = keep(
-            "port-pack-no-redirect",
-            spec_for(address).as_deref(),
-            |proxy| {
-                let builder = ureq::AgentBuilder::new().redirects(0);
-                match proxy {
-                    Some(proxy) => builder.proxy(proxy).build(),
-                    None => builder.build(),
-                }
-            },
-        );
+        let agent = agent("port-pack-no-redirect", address, |builder| {
+            builder.redirects(0)
+        });
         match agent
             .get(address)
             .set("User-Agent", crate::modrinth::AGENT)
@@ -195,49 +207,55 @@ fn checked_url(address: &str, hosts: &[&str]) -> Result<url::Url, String> {
 /// The agent `url` is fetched with, built by `build` and then kept for the next request that names
 /// the same `slot` and proxy: a fresh `Agent` starts a new connection pool, so building one per
 /// request is a handshake per file, and a modpack's jars are fetched one after another.
-pub fn keep(
+fn keep(
     slot: &str,
     spec: Option<&str>,
     build: impl FnOnce(Option<ureq::Proxy>) -> ureq::Agent,
 ) -> ureq::Agent {
-    let proxy = spec.and_then(parse);
-    // An address that isn't a proxy is used as none, and remembered as none.
-    let key = format!(
-        "{slot} {}",
-        if proxy.is_some() {
-            spec.unwrap_or_default()
-        } else {
-            ""
-        }
-    );
+    // The key comes first, so one request reads the address once: a wrong one is no proxy, and is
+    // remembered as none.
+    let key = format!("{slot} {}", spec.unwrap_or_default());
     if let Some(agent) = lock(&KEPT).as_ref().and_then(|kept| kept.get(&key)) {
         return agent.clone();
     }
-    let agent = build(proxy);
+    let agent = build(spec.and_then(usable));
     lock(&KEPT)
         .get_or_insert_with(HashMap::new)
         .insert(key, agent.clone());
     agent
 }
 
-/// `spec` as a proxy, when it is one. An address that can't be used is said once: a download left
-/// to go direct would otherwise fail with nothing pointing at the proxy.
-pub fn parse(spec: &str) -> Option<ureq::Proxy> {
+/// `spec` as a proxy. One that can't be used is said once and counts as none: a download left to
+/// go direct would otherwise fail with nothing pointing at the proxy.
+fn usable(spec: &str) -> Option<ureq::Proxy> {
+    read(spec).unwrap_or_else(|why| {
+        say(&why);
+        None
+    })
+}
+
+/// The proxy `spec` names, why it can't be used, or `Ok(None)` for an empty one. The only copy of
+/// that verdict: `refuse` shows it under the Settings field, and a request that can't use the
+/// address falls back on it.
+fn read(spec: &str) -> Result<Option<ureq::Proxy>, String> {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        return Ok(None);
+    }
     // `socks5h` is curl's name for SOCKS5 with the proxy resolving host names. `ureq` has only the
     // name `socks5`, which already sends it host names to resolve.
     let address = match spec.strip_prefix("socks5h://") {
         Some(rest) => format!("socks5://{rest}"),
         None => spec.to_owned(),
     };
+    // `ureq` takes `http://` without a host, which would leave a download failing with nothing
+    // said about the proxy.
     match ureq::Proxy::new(&address) {
-        Ok(proxy) => Some(proxy),
-        Err(e) => {
-            say(&format!(
-                "The proxy address {} can't be used ({e}); downloads go without one.",
-                redacted(spec)
-            ));
-            None
-        }
+        Ok(proxy) if host_of(spec).is_some_and(|host| !host.is_empty()) => Ok(Some(proxy)),
+        _ => Err(format!(
+            "{} isn't a proxy address. Write it as http://host:port or socks5://host:port.",
+            redacted(spec)
+        )),
     }
 }
 
@@ -245,7 +263,7 @@ pub fn parse(spec: &str) -> Option<ureq::Proxy> {
 /// be used is printed to stderr and shown in the launcher, and a proxy's credentials don't belong in
 /// either. Everything up to the last `@` is the credentials, so a password with an unescaped `/` or
 /// `@` is hidden too.
-pub fn redacted(spec: &str) -> String {
+fn redacted(spec: &str) -> String {
     let (scheme, rest) = match spec.split_once("://") {
         Some((scheme, rest)) => (format!("{scheme}://"), rest),
         None => (String::new(), spec),
@@ -256,15 +274,14 @@ pub fn redacted(spec: &str) -> String {
     }
 }
 
-/// Whether `url` is reached without the proxy: a local address, or a host `NO_PROXY` names. The
-/// launcher asks this of its own requests, so both reach the same hosts directly.
-pub fn direct(url: &str) -> bool {
+/// Whether `url` is reached without the proxy: a local address, or a host `NO_PROXY` names.
+fn direct(url: &str) -> bool {
     host_of(url).is_some_and(|host| local(host) || excluded(host, &no_proxy()))
 }
 
 /// `HTTPS_PROXY` (`HTTP_PROXY` for an http address), then `ALL_PROXY`, in the upper-case spelling
 /// first and the lower-case one after, as the tools that write them do.
-pub fn env_for(scheme: &str) -> Option<String> {
+fn env_for(scheme: &str) -> Option<String> {
     let names: &[&str] = if scheme.eq_ignore_ascii_case("http") {
         &["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
     } else {
@@ -287,7 +304,7 @@ fn no_proxy() -> String {
 }
 
 /// The host part of a URL (`https://user@host:port/path` is `host`).
-pub fn host_of(url: &str) -> Option<&str> {
+fn host_of(url: &str) -> Option<&str> {
     let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
     let rest = rest.split(['/', '?', '#']).next()?;
     let rest = rest.rsplit_once('@').map_or(rest, |(_, host)| host);
@@ -299,7 +316,7 @@ pub fn host_of(url: &str) -> Option<&str> {
 }
 
 /// `https` in `https://…`, or None for anything that isn't an absolute address.
-pub fn scheme_of(url: &str) -> Option<&str> {
+fn scheme_of(url: &str) -> Option<&str> {
     url.split_once("://").map(|(scheme, _)| scheme)
 }
 
@@ -499,12 +516,50 @@ mod tests {
         assert!(!excluded("[2001:db8::1]", "2001:db8::2"));
     }
 
+    /// What the Settings page shows and what a request falls back on: one address, one verdict.
     #[test]
-    fn an_address_that_cant_be_used_becomes_no_proxy() {
-        assert!(parse("http://127.0.0.1:7890").is_some());
-        assert!(parse("127.0.0.1:7890").is_some());
-        assert!(parse("socks5://127.0.0.1:7891").is_some());
-        assert!(parse("socks3://127.0.0.1:7890").is_none());
+    fn an_address_that_cant_be_used_is_refused_once() {
+        assert!(read("http://127.0.0.1:7890").is_ok());
+        assert!(read("127.0.0.1:7890").is_ok());
+        assert!(read("http://user:pass@proxy.local:3128").is_ok());
+        assert!(read("socks5://127.0.0.1:7891").is_ok());
+        assert_eq!(refuse(""), None);
+        assert_eq!(refuse("  "), None);
+        assert_eq!(refuse("http://127.0.0.1:7890"), None);
+        assert_eq!(refuse("127.0.0.1:7890"), None);
+        assert_eq!(refuse("socks5h://user:pass@127.0.0.1:7891"), None);
+        assert!(refuse("http://").is_some());
+        assert!(refuse("socks3://127.0.0.1:7890").is_some());
+        assert!(usable("socks3://127.0.0.1:7890").is_none());
+    }
+
+    /// The reason is shown under the Settings field and printed by `horizon-launcher settings set`,
+    /// and a proxy's credentials belong in neither.
+    #[test]
+    fn a_refused_address_keeps_its_credentials_to_itself() {
+        let why = refuse("socks3://user:secret@127.0.0.1:7891").unwrap();
+        assert!(why.starts_with("socks3://***@127.0.0.1:7891 "), "{why}");
+        let why = refuse("http://user:secret@").unwrap();
+        assert!(!why.contains("secret"), "{why}");
+    }
+
+    /// The launcher's own requests ask the same question of the same rules: an address on this
+    /// computer, or one `NO_PROXY` names, gets no proxy even when the player set one.
+    #[test]
+    fn the_address_a_request_takes_is_the_one_the_rules_give() {
+        let _turn = alone();
+        set_proxy(None);
+        assert_eq!(spec_for("http://127.0.0.1:8130/api/v1/status"), None);
+        assert_eq!(spec_for("http://localhost/api/v1/status"), None);
+        set_proxy(Some("http://127.0.0.1:7890".into()));
+        assert_eq!(
+            spec_for("https://cdn.modrinth.com/v2/x.jar").as_deref(),
+            Some("http://127.0.0.1:7890")
+        );
+        assert_eq!(spec_for("http://127.0.0.1:8130/api/v1/status"), None);
+        assert_eq!(setting().as_deref(), Some("http://127.0.0.1:7890"));
+        set_proxy(None);
+        assert_eq!(setting(), None);
     }
 
     /// A stand-in SOCKS5 proxy: answers one request itself and returns the host it was asked for.
@@ -548,7 +603,9 @@ mod tests {
     fn a_request_goes_through_a_socks_proxy() {
         for scheme in ["socks5", "socks5h"] {
             let (port, server) = socks5_proxy();
-            let proxy = parse(&format!("{scheme}://127.0.0.1:{port}")).unwrap();
+            let proxy = read(&format!("{scheme}://127.0.0.1:{port}"))
+                .unwrap()
+                .unwrap();
             let agent = ureq::AgentBuilder::new().proxy(proxy).build();
             let answer = agent.get("http://horizon.invalid/a.jar").call().unwrap();
             assert_eq!(answer.into_string().unwrap(), "ok", "{scheme}");
@@ -564,23 +621,23 @@ mod tests {
         set_proxy(None);
         let mut built = 0;
         for _ in 0..3 {
-            keep("kept", None, |_| {
+            agent("kept", "https://cdn.modrinth.com/v2/x.jar", |b| {
                 built += 1;
-                ureq::AgentBuilder::new().build()
+                b
             });
         }
         assert_eq!(built, 1, "three requests, one agent");
-        // Another address is another agent, and a new setting drops the ones before it.
-        keep("kept", Some("http://127.0.0.1:7890"), |proxy| {
-            assert!(proxy.is_some());
+        // Another part of the launcher is another agent, and a new setting drops the ones before
+        // it.
+        agent("another", "https://cdn.modrinth.com/v2/x.jar", |b| {
             built += 1;
-            ureq::AgentBuilder::new().build()
+            b
         });
-        assert_eq!(built, 2, "a second address needs a second agent");
+        assert_eq!(built, 2, "a second slot needs a second agent");
         set_proxy(Some("http://127.0.0.1:7891".into()));
-        keep("kept", Some("http://127.0.0.1:7891"), |_| {
+        agent("kept", "https://cdn.modrinth.com/v2/x.jar", |b| {
             built += 1;
-            ureq::AgentBuilder::new().build()
+            b
         });
         assert_eq!(built, 3, "a new setting drops the agents kept before it");
         set_proxy(None);

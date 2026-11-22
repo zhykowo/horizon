@@ -346,13 +346,16 @@ impl Toolchain {
     /// opens no console window: cargo is a console program, and the launcher has none to share, so
     /// each build showed an empty one for as long as it ran (#4770).
     pub fn command(&self, program: &Path) -> Command {
-        self.command_through(program, crate::proxy::for_programs())
+        self.command_through(
+            program,
+            horizon_port_pack::net::setting().map(crate::downloads::proxy_address),
+        )
     }
 
-    /// [`Toolchain::command`], its downloads going through `proxy`, the launcher's setting: Cargo
-    /// fetches the crates and horizon-mixins itself and doesn't read the launcher's settings, so the
-    /// Settings page's proxy is handed to it (#16718). Without one it reads `HTTPS_PROXY` from the
-    /// environment, as the launcher does.
+    /// [`Toolchain::command`], its downloads going through `proxy`, the launcher's setting
+    /// (`horizon_port_pack::net`): Cargo fetches the crates and horizon-mixins itself and doesn't
+    /// read the launcher's settings, so the Settings page's proxy is handed to it (#16718). Without
+    /// one it reads `HTTPS_PROXY` from the environment, as the launcher does.
     fn command_through(&self, program: &Path, proxy: Option<String>) -> Command {
         let mut cmd = crate::process::command(program);
         let path = std::env::var_os("PATH").unwrap_or_default();

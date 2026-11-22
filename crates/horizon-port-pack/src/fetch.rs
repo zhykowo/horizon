@@ -160,7 +160,7 @@ pub fn fetch(
         .filter(|(dest, _)| !dest.exists())
     {
         let checksum = format!("{url}.sha1");
-        let sha1 = crate::net::agent(&checksum)
+        let sha1 = crate::net::agent("port-pack", &checksum, |b| b)
             .get(&checksum)
             .set("User-Agent", modrinth::AGENT)
             .call()

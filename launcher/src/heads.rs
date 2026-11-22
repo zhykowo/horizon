@@ -99,11 +99,9 @@ pub fn profile_face(
     let face = profile_face_with(account, cache, resources, &|url| {
         use std::io::Read;
         failed.set(true);
-        let response = crate::proxy::agent(
-            ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(10)),
-            url,
-        )
-        .build()
+        let response = horizon_port_pack::net::agent("heads", url, |builder| {
+            builder.timeout(std::time::Duration::from_secs(10))
+        })
         .get(url)
         .call()
         .ok()?;

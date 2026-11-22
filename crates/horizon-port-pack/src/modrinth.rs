@@ -121,7 +121,7 @@ fn jar_file_urls(found: Value) -> Result<BTreeMap<String, String>, String> {
 }
 
 fn post(url: &str, body: &Value) -> Result<Value, String> {
-    let response = crate::net::agent(url)
+    let response = crate::net::agent("port-pack", url, |b| b)
         .post(url)
         .set("User-Agent", AGENT)
         .set("Content-Type", "application/json")
@@ -131,7 +131,7 @@ fn post(url: &str, body: &Value) -> Result<Value, String> {
 }
 
 fn get(url: &str) -> Result<Value, String> {
-    let response = crate::net::agent(url)
+    let response = crate::net::agent("port-pack", url, |b| b)
         .get(url)
         .set("User-Agent", AGENT)
         .call()

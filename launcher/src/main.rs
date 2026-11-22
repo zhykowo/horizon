@@ -251,6 +251,40 @@ enum Load<T> {
 
 const LOG_LINES: usize = 2000;
 
+/// Which of Settings' one-line fields (`text_row`, `save_field`).
+#[derive(Clone, Copy)]
+pub(crate) enum Line {
+    Args = 0,
+    Proxy = 1,
+}
+
+/// One of those fields: the line it holds, whether it has the keyboard, its focus handle, and what
+/// it shows empty.
+pub(crate) struct Field {
+    pub(crate) edit: line_edit::LineEdit,
+    pub(crate) focused: bool,
+    pub(crate) focus: FocusHandle,
+    id: &'static str,
+    placeholder: &'static str,
+}
+
+impl Field {
+    pub(crate) fn new(
+        id: &'static str,
+        edit: line_edit::LineEdit,
+        placeholder: &'static str,
+        cx: &mut Context<Launcher>,
+    ) -> Self {
+        Self {
+            edit,
+            focused: false,
+            focus: cx.focus_handle(),
+            id,
+            placeholder,
+        }
+    }
+}
+
 struct Launcher {
     theme: Theme,
     page: Page,
@@ -515,14 +549,9 @@ struct Launcher {
     client_run: Option<(String, Instant)>,
     /// The running game's instance variables, for its post-exit command.
     client_vars: horizon_launcher::launch::Vars,
-    /// Settings' Game arguments field: the line, whether it has focus, and its focus handle.
-    args_input: line_edit::LineEdit,
-    args_focused: bool,
-    args_focus: FocusHandle,
-    /// Settings' Proxy field, the same way (`proxy`).
-    proxy_input: line_edit::LineEdit,
-    proxy_focused: bool,
-    proxy_focus: FocusHandle,
+    /// Settings' one-line text fields: Game arguments and Proxy, drawn and edited alike
+    /// (`text_row`).
+    fields: [Field; 2],
     /// Opt-in data collection: the player's answer and Settings' section (`collection`).
     collection: collection::Collection,
     /// Settings' "Connect an AI agent" (`agents_page`).

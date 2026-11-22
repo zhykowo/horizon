@@ -438,121 +438,23 @@ impl Launcher {
         )
     }
 
+    /// Settings' Game arguments row: the extra arguments the game starts with, passed through as
+    /// they are (quotes group a word with spaces).
     pub(crate) fn game_args_row(&self, n: usize, cx: &mut Context<Self>) -> Div {
-        let t = self.theme;
-        let focused = self.args_focused;
-        let field = div()
-            .id("game-args")
-            .track_focus(&self.args_focus)
-            .flex()
-            .items_center()
-            .w(px(300.))
-            .h(px(30.))
-            .px(px(12.))
-            .overflow_hidden()
-            .border_2()
-            .border_color(if focused { t.accent } else { t.outline })
-            .bg(t.well)
-            .font_family(theme::MONO)
-            .text_size(px(12.))
-            .cursor_text()
-            .child(line_edit::content(
-                &self.args_input,
-                &t,
-                focused,
-                false,
-                false,
-                tr("For example --server-thread"),
-            ))
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                window.focus(&this.args_focus, cx);
-                cx.notify();
-            }))
-            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
-                match line_edit::handle(&mut this.args_input, ev, cx) {
-                    line_edit::Key::Pass => return,
-                    line_edit::Key::Escape => window.blur(cx),
-                    line_edit::Key::Edited => {
-                        this.settings.game_args = this.args_input.text().to_string();
-                        this.save_settings();
-                    }
-                    _ => {}
-                }
-                cx.stop_propagation();
-                cx.notify();
-            }));
-        let field = line_edit::mouse(field, cx, |this| &mut this.args_input);
-        if glass_ui::flat() {
-            return glass_ui::setting_row_stacked(
-                tr("Game arguments"),
-                Some(
-                    div()
-                        .child(tr("Extra arguments for the game, passed through as-is (quotes group a word with spaces). Applies the next time the game starts."))
-                        .into_any_element(),
-                ),
-                glass_ui::wide_field(field, focused).into_any_element(),
-            );
-        }
-        index_row(
-            n,
-            tr("Game arguments"),
-            Some(
-                div()
-                    .child(tr("Extra arguments for the game, passed through as-is (quotes group a word with spaces). Applies the next time the game starts."))
-                    .into_any_element(),
-            ),
-            Some(field.into_any_element()),
-            &t,
-        )
+        let detail = div()
+            .child(tr("Extra arguments for the game, passed through as-is (quotes group a word with spaces). Applies the next time the game starts."))
+            .into_any_element();
+        self.text_row(Line::Args, n, "Game arguments", detail, cx)
     }
 
     /// Settings' Proxy row: the proxy every download and sign-in goes through, kept in
-    /// `settings.json` and read back by `proxy.rs` on each request.
+    /// `settings.json` and handed to `horizon_port_pack::net`, whose rules decide what goes direct.
     pub(crate) fn proxy_row(&self, n: usize, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
-        let focused = self.proxy_focused;
-        let field = div()
-            .id("proxy")
-            .track_focus(&self.proxy_focus)
-            .flex()
-            .items_center()
-            .w(px(300.))
-            .h(px(30.))
-            .px(px(12.))
-            .overflow_hidden()
-            .border_2()
-            .border_color(if focused { t.accent } else { t.outline })
-            .bg(t.well)
-            .font_family(theme::MONO)
-            .text_size(px(12.))
-            .cursor_text()
-            .child(line_edit::content(
-                &self.proxy_input,
-                &t,
-                focused,
-                false,
-                false,
-                tr("For example http://127.0.0.1:7890"),
-            ))
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                window.focus(&this.proxy_focus, cx);
-                cx.notify();
-            }))
-            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
-                match line_edit::handle(&mut this.proxy_input, ev, cx) {
-                    line_edit::Key::Pass => return,
-                    line_edit::Key::Escape => window.blur(cx),
-                    line_edit::Key::Edited => this.save_proxy(),
-                    _ => {}
-                }
-                cx.stop_propagation();
-                cx.notify();
-            }));
-        let field = line_edit::mouse(field, cx, |this| &mut this.proxy_input);
         // A half-typed address is no reason to complain; one left behind is.
         let detail = match (
-            focused,
-            horizon_launcher::proxy::refuse(self.proxy_input.text()),
+            self.fields[Line::Proxy as usize].focused,
+            horizon_port_pack::net::refuse(self.fields[Line::Proxy as usize].edit.text()),
         ) {
             (false, Some(why)) => div().text_color(t.danger).child(why).into_any_element(),
             _ => div()
@@ -563,29 +465,88 @@ impl Launcher {
                 ))
                 .into_any_element(),
         };
+        self.text_row(Line::Proxy, n, "Proxy", detail, cx)
+    }
+
+    /// Settings' one-line text rows (`Line`): the same box, edited the same way, and kept in
+    /// `settings.json` as they change. Enter, Escape and Tab are the window's, not the field's.
+    fn text_row(
+        &self,
+        line: Line,
+        n: usize,
+        label: &'static str,
+        detail: gpui::AnyElement,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let t = self.theme;
+        let f = &self.fields[line as usize];
+        let focused = f.focused;
+        let field = div()
+            .id(f.id)
+            .track_focus(&f.focus)
+            .flex()
+            .items_center()
+            .w(px(300.))
+            .h(px(30.))
+            .px(px(12.))
+            .overflow_hidden()
+            .border_2()
+            .border_color(if focused { t.accent } else { t.outline })
+            .bg(t.well)
+            .font_family(theme::MONO)
+            .text_size(px(12.))
+            .cursor_text()
+            .child(line_edit::content(
+                &f.edit,
+                &t,
+                focused,
+                false,
+                false,
+                f.placeholder,
+            ))
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                window.focus(&this.line_mut(line).focus, cx);
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
+                match line_edit::handle(&mut this.line_mut(line).edit, ev, cx) {
+                    line_edit::Key::Pass => return,
+                    line_edit::Key::Escape => window.blur(cx),
+                    line_edit::Key::Edited => this.save_field(line),
+                    _ => {}
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }));
+        let field = line_edit::mouse(field, cx, move |this| &mut this.line_mut(line).edit);
         if glass_ui::flat() {
             return glass_ui::setting_row_stacked(
-                tr("Proxy"),
+                label,
                 Some(detail),
                 glass_ui::wide_field(field, focused).into_any_element(),
             );
         }
-        index_row(
-            n,
-            tr("Proxy"),
-            Some(detail),
-            Some(field.into_any_element()),
-            &t,
-        )
+        index_row(n, label, Some(detail), Some(field.into_any_element()), &t)
     }
 
-    /// Keeps the Proxy field in `settings.json`, and tells the parts that build their own agents
-    /// (`horizon-port-pack`) which proxy to use.
-    pub(crate) fn save_proxy(&mut self) {
-        let value = self.proxy_input.text().trim().to_owned();
-        self.settings.proxy = (!value.is_empty()).then_some(value);
+    /// Settings' field `line`, which it edits.
+    pub(crate) fn line_mut(&mut self, line: Line) -> &mut Field {
+        &mut self.fields[line as usize]
+    }
+
+    /// Keeps Settings' field `line` in `settings.json`. The Proxy one is also what every download
+    /// goes through (`horizon_port_pack::net`).
+    pub(crate) fn save_field(&mut self, line: Line) {
+        let text = self.fields[line as usize].edit.text().to_string();
+        match line {
+            Line::Args => self.settings.game_args = text,
+            Line::Proxy => {
+                let value = text.trim().to_owned();
+                self.settings.proxy = (!value.is_empty()).then_some(value);
+                horizon_port_pack::net::set_proxy(self.settings.proxy.clone());
+            }
+        }
         self.save_settings();
-        horizon_launcher::proxy::announce(self.settings.proxy.clone());
     }
 
     /// Settings' Microsoft accounts: who is signed in and plays, the sign-in with its code. The

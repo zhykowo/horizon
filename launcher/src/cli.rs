@@ -1151,7 +1151,7 @@ fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> Result<(), 
         "proxy" => {
             if value == "default" || value.is_empty() {
                 s.proxy = None;
-            } else if let Some(why) = horizon_launcher::proxy::refuse(value) {
+            } else if let Some(why) = horizon_port_pack::net::refuse(value) {
                 return Err(why);
             } else {
                 s.proxy = Some(value.trim().to_string());
@@ -1730,7 +1730,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 let value = value.ok_or("settings KEY VALUE: the value is missing")?;
                 set_setting(&mut settings, &key, &value)?;
                 settings.save()?;
-                horizon_launcher::proxy::announce(settings.proxy.clone());
+                horizon_port_pack::net::set_proxy(settings.proxy.clone());
             }
             let all = settings_json(&settings);
             if as_json {
