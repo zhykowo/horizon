@@ -46,10 +46,16 @@ pub fn setting() -> Option<String> {
 /// its scheme, unless `url` is a host that must be reached directly. For the clients that aren't
 /// `ureq`'s and read an address rather than an `Agent`.
 pub fn spec_for(url: &str) -> Option<String> {
-    if direct(url) {
+    spec_in(url, setting(), &no_proxy())
+}
+
+/// [`spec_for`] with the setting and `NO_PROXY`'s list given, so the rules can be asked without
+/// the environment the test happens to run in.
+fn spec_in(url: &str, setting: Option<String>, no_proxy: &str) -> Option<String> {
+    if direct(url, no_proxy) {
         return None;
     }
-    setting().or_else(|| env_for(scheme_of(url).unwrap_or("https")))
+    setting.or_else(|| env_for(scheme_of(url).unwrap_or("https")))
 }
 
 /// An agent for `url`, from `slot`: through the proxy when one is set, unless `url` is a host that
@@ -274,9 +280,9 @@ fn redacted(spec: &str) -> String {
     }
 }
 
-/// Whether `url` is reached without the proxy: a local address, or a host `NO_PROXY` names.
-fn direct(url: &str) -> bool {
-    host_of(url).is_some_and(|host| local(host) || excluded(host, &no_proxy()))
+/// Whether `url` is reached without the proxy: a local address, or a host `no_proxy` names.
+fn direct(url: &str, no_proxy: &str) -> bool {
+    host_of(url).is_some_and(|host| local(host) || excluded(host, no_proxy))
 }
 
 /// `HTTPS_PROXY` (`HTTP_PROXY` for an http address), then `ALL_PROXY`, in the upper-case spelling
@@ -425,17 +431,21 @@ mod tests {
             PROXY.lock().unwrap().as_deref(),
             Some("http://127.0.0.1:7890")
         );
+        assert_eq!(setting().as_deref(), Some("http://127.0.0.1:7890"));
         set_proxy(Some("   ".into()));
         assert!(PROXY.lock().unwrap().is_none());
+        assert_eq!(setting(), None);
     }
 
     /// An address on this computer is reached directly whatever `NO_PROXY` says: what an import
     /// needs when the launcher's own requests to it go direct.
     #[test]
     fn a_local_address_is_reached_directly() {
-        assert!(direct("http://127.0.0.1:8130/api/v1/status"));
-        assert!(direct("http://localhost/api/v1/status"));
-        assert!(direct("https://[::1]:25565/"));
+        assert!(direct("http://127.0.0.1:8130/api/v1/status", ""));
+        assert!(direct("http://localhost/api/v1/status", ""));
+        assert!(direct("https://[::1]:25565/", ""));
+        assert!(direct("https://[::1]:25565/", "example.com"));
+        assert!(!direct("https://cdn.modrinth.com/v2/x.jar", ""));
     }
 
     #[test]
@@ -544,22 +554,22 @@ mod tests {
     }
 
     /// The launcher's own requests ask the same question of the same rules: an address on this
-    /// computer, or one `NO_PROXY` names, gets no proxy even when the player set one.
+    /// computer, or one `NO_PROXY` names, gets no proxy however the player set one. The setting and
+    /// the list are given, so an environment with a `NO_PROXY` of its own doesn't decide this.
     #[test]
     fn the_address_a_request_takes_is_the_one_the_rules_give() {
-        let _turn = alone();
-        set_proxy(None);
-        assert_eq!(spec_for("http://127.0.0.1:8130/api/v1/status"), None);
-        assert_eq!(spec_for("http://localhost/api/v1/status"), None);
-        set_proxy(Some("http://127.0.0.1:7890".into()));
+        let jar = "https://cdn.modrinth.com/v2/x.jar";
+        let set = Some("http://127.0.0.1:7890".to_owned());
         assert_eq!(
-            spec_for("https://cdn.modrinth.com/v2/x.jar").as_deref(),
+            spec_in(jar, set.clone(), "").as_deref(),
             Some("http://127.0.0.1:7890")
         );
-        assert_eq!(spec_for("http://127.0.0.1:8130/api/v1/status"), None);
-        assert_eq!(setting().as_deref(), Some("http://127.0.0.1:7890"));
-        set_proxy(None);
-        assert_eq!(setting(), None);
+        assert_eq!(spec_in(jar, set.clone(), "modrinth.com"), None);
+        assert_eq!(spec_in(jar, set.clone(), "*"), None);
+        assert_eq!(
+            spec_in("http://127.0.0.1:8130/api/v1/status", set, ""),
+            None
+        );
     }
 
     /// A stand-in SOCKS5 proxy: answers one request itself and returns the host it was asked for.

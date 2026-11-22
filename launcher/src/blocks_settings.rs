@@ -479,6 +479,8 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Div {
         let t = self.theme;
+        // One translation, whichever layout draws it.
+        let title = tr(label);
         let f = &self.fields[line as usize];
         let focused = f.focused;
         let field = div()
@@ -521,12 +523,12 @@ impl Launcher {
         let field = line_edit::mouse(field, cx, move |this| &mut this.line_mut(line).edit);
         if glass_ui::flat() {
             return glass_ui::setting_row_stacked(
-                label,
+                title,
                 Some(detail),
                 glass_ui::wide_field(field, focused).into_any_element(),
             );
         }
-        index_row(n, label, Some(detail), Some(field.into_any_element()), &t)
+        index_row(n, title, Some(detail), Some(field.into_any_element()), &t)
     }
 
     /// Settings' field `line`, which it edits.
