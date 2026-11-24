@@ -262,7 +262,7 @@ impl Base {
         match self {
             Self::Url(base) => {
                 let url = format!("{base}/{release}/{file}");
-                let response = horizon_port_pack::net::agent(&url)
+                let response = horizon_port_pack::net::agent("sdk", &url, |b| b)
                     .get(&url)
                     .call()
                     .map_err(|e| format!("{url}: {e}"))?;
@@ -298,7 +298,7 @@ impl Base {
                 .collect()),
             Self::Url(base) if base == BASE => {
                 let api = horizon_addresses::SDK_RELEASE_LIST;
-                let text = horizon_port_pack::net::agent(api)
+                let text = horizon_port_pack::net::agent("sdk", api, |b| b)
                     .get(api)
                     .call()
                     .map_err(|e| format!("{api}: {e}"))?
