@@ -498,14 +498,12 @@ impl Launcher {
             .font_family(theme::MONO)
             .text_size(px(12.))
             .cursor_text()
-            .child(line_edit::content(
-                &f.edit,
-                &t,
-                focused,
-                false,
-                false,
-                f.placeholder,
-            ))
+            // The glass look's field fits what it shows to the box's width (`content_in_width`).
+            .child(if glass_ui::flat() {
+                line_edit::content_in_width(&f.edit, &t, focused, f.placeholder)
+            } else {
+                line_edit::content(&f.edit, &t, focused, false, false, f.placeholder)
+            })
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 window.focus(&this.line_mut(line).focus, cx);
                 cx.notify();
