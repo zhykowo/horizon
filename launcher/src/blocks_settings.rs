@@ -483,6 +483,7 @@ impl Launcher {
         let title = tr(label);
         let f = &self.fields[line as usize];
         let focused = f.focused;
+        let placeholder = tr(f.placeholder);
         let field = div()
             .id(f.id)
             .track_focus(&f.focus)
@@ -500,9 +501,9 @@ impl Launcher {
             .cursor_text()
             // The glass look's field fits what it shows to the box's width (`content_in_width`).
             .child(if glass_ui::flat() {
-                line_edit::content_in_width(&f.edit, &t, focused, f.placeholder)
+                line_edit::content_in_width(&f.edit, &t, focused, placeholder)
             } else {
-                line_edit::content(&f.edit, &t, focused, false, false, f.placeholder)
+                line_edit::content(&f.edit, &t, focused, false, false, placeholder)
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 window.focus(&this.line_mut(line).focus, cx);
